@@ -23,7 +23,7 @@ export function verifyResendSignature(
   headers: { id?: string; timestamp?: string; signature?: string },
   rawBody: Buffer,
   now = Date.now(),
-): { ok: true } | { ok: false; reason: string } {
+): { ok: true; reason?: undefined } | { ok: false; reason: string } {
   const { id, timestamp, signature } = headers;
   if (!id || !timestamp || !signature) return { ok: false, reason: 'Missing webhook signature headers.' };
 
@@ -87,7 +87,7 @@ export function resendWebhookHandler(deps: AppDeps, logger: Logger): RequestHand
         rawBody,
       );
       if (!verification.ok) {
-        logger.warn({ reason: verification.reason }, 'Rejected Resend webhook');
+        logger.warn({ reason: verification.reason ?? 'unknown' }, 'Rejected Resend webhook');
         throw new AppError(401, 'UNAUTHENTICATED', 'The webhook signature could not be verified.');
       }
 

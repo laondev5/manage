@@ -1,8 +1,26 @@
 {
-  "extends": "../../tsconfig.base.json",
+  // Kept self-contained rather than extending ../../tsconfig.base.json: this
+  // package is type-checked on its own by the deploy platform, and a checker
+  // that cannot resolve a parent config outside the project root silently falls
+  // back to non-strict defaults, which breaks Zod's inferred types.
   "compilerOptions": {
+    "target": "ES2022",
     "lib": ["ES2023"],
-    "types": ["node"]
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "declaration": false,
+    "noEmit": true
   },
   "include": ["src", "vitest.config.ts", "tsup.config.ts"]
 }
