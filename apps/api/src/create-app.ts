@@ -1,5 +1,5 @@
 import express, { type Express, type RequestHandler } from 'express';
-import helmet from 'helmet';
+import helmetModule, { type HelmetOptions } from 'helmet';
 import cors from 'cors';
 import { pinoHttp } from 'pino-http';
 import type { Logger } from 'pino';
@@ -9,6 +9,13 @@ import type { AppDeps } from './http/context.js';
 import { requestId, errorHandler, notFoundHandler } from './http/http.js';
 import { buildApiRouter } from './routes/index.js';
 import { resendWebhookHandler } from './webhooks.js';
+
+// helmet publishes ESM and CJS builds with separate type entries and no "types"
+// export condition, so some type-check environments resolve the module namespace
+// instead of its callable default. Normalize it once here.
+const helmet = helmetModule as unknown as (
+  options?: Readonly<HelmetOptions>,
+) => RequestHandler;
 
 const blockedSignup: RequestHandler = (_req, res) => {
   res.status(404).json({
