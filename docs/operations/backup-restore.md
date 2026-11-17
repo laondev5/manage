@@ -48,8 +48,8 @@ copy while writes are paused.
 
 ## Restore procedure
 
-1. **Announce and freeze writes.** Pause the Vercel Cron schedule (or remove the
-   `crons` entry in a temporary deployment) and put the web/mobile apps into a
+1. **Announce and freeze writes.** Disable the Worker tick workflow (Actions →
+   Worker tick → ⋯ → Disable workflow) and put the web/mobile apps into a
    maintenance state or stop traffic. Do not let the worker deliver alerts from a
    half-restored database.
 2. **Restore into a scratch database first** (`manage_restore_check`), never
@@ -92,8 +92,8 @@ copy while writes are paused.
    Leases expire on their own; do not hand-edit `attempts` unless you intend to
    bypass dead-lettering.
 6. **Re-enable the worker** and run a manual tick (`curl` the endpoint with
-   `CRON_SECRET`). Confirm `delivered`, `failed`, and `remaining` in the
-   response.
+   `WORKER_TRIGGER_SECRET`). Confirm `delivered`, `failed`, and `remaining` in
+   the response.
 7. **Smoke-test** one staff clock-in/out and one owner alert review against a
    test site, then re-enable normal traffic.
 

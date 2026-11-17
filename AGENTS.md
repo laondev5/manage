@@ -124,8 +124,9 @@ pnpm db:indexes:verify   # compares required indexes with the live database
 ## Deployment
 
 The API is designed for Vercel (prebundled `apps/api/server.js`, see
-`docs/deployment-vercel.md`). Vercel Cron calls
-`GET /api/v1/internal/worker/tick` with `CRON_SECRET`
-(`apps/api/vercel.json`, every five minutes). Keep the schedule, secret, and
-`WORKER_SCHEDULE_SECONDS` consistent, or the admin health page will report the
-worker as overdue.
+`docs/deployment-vercel.md`). A GitHub Actions workflow
+(`.github/workflows/worker-tick.yml`) calls
+`POST /api/v1/internal/worker/tick` with `WORKER_TRIGGER_SECRET` every five
+minutes; `apps/api/vercel.json` deliberately declares no `crons` entry. Keep the
+schedule, secret, and `WORKER_SCHEDULE_SECONDS` consistent, or the admin health
+page will report the worker as overdue.

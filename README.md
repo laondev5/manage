@@ -66,7 +66,7 @@ replay, concurrent clock-ins, and the scheduled worker tick. See
 
 ## Deployment
 
-- `docs/deployment-vercel.md` — Vercel API + web, Atlas, Vercel Cron worker
+- `docs/deployment-vercel.md` — Vercel API + web, Atlas, GitHub Actions worker
   schedule, secret rotation, rollback, and health checks.
 - `docs/operations/` — backup/restore, incident runbook, device test record.
 - `apps/api/openapi.yaml` — REST contract for `/api/v1`.

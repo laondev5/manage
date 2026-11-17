@@ -801,9 +801,11 @@ paths:
   /api/v1/internal/worker/tick:
     get:
       tags: [Internal]
-      summary: Scheduled outbox tick (Vercel Cron)
+      summary: Scheduled outbox tick (Vercel Cron form)
       description: |
-        Machine-only. Vercel Cron calls this with `Authorization: Bearer $CRON_SECRET`.
+        Machine-only. Vercel Cron calls this with `Authorization: Bearer $CRON_SECRET`;
+        this repo schedules the worker with GitHub Actions instead and uses the POST
+        form below.
         Returns 404 when neither `CRON_SECRET` nor `WORKER_TRIGGER_SECRET` is configured.
       security: []
       parameters:
@@ -815,10 +817,10 @@ paths:
         '503': { description: The tick ran but reported ok false }
     post:
       tags: [Internal]
-      summary: External scheduler outbox tick
+      summary: Scheduled outbox tick (GitHub Actions)
       description: |
-        Machine-only alternative to the cron GET. Accepts the same bearer secret in
-        `Authorization` or `X-Manage-Worker-Secret`.
+        Machine-only; this is the form `.github/workflows/worker-tick.yml` calls.
+        Accepts the same bearer secret in `Authorization` or `X-Manage-Worker-Secret`.
       security: []
       parameters:
         - { name: max, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 40 } }

@@ -23,17 +23,18 @@ the state machines that make attendance and alerting defensible.
                                        │ leased delivery
                         ┌──────────────┴──────────────┐
                         │                             │
-             apps/worker (loop)          GET /api/v1/internal/worker/tick
-             local / container           Vercel Cron on Vercel
+             apps/worker (loop)          POST /api/v1/internal/worker/tick
+             local / container           GitHub Actions, every 5 minutes
 ```
 
 - **One API origin.** The browser never talks to a second origin: Next.js
   rewrites `/api/v1/*` and `/api/auth/*` to `API_ORIGIN`, so Better Auth cookies
   stay first-party and `SameSite=Lax` works without CORS exceptions.
 - **Two worker modes.** `apps/worker` runs a polling loop for local/container
-  deployments. On Vercel, Vercel Cron calls the secret-protected tick endpoint
-  every five minutes (`CRON_SECRET` in the bearer header). Both modes call the
-  same `runWorkerTick` in `packages/worker-core`; only scheduling differs.
+  deployments. On Vercel, a GitHub Actions workflow calls the secret-protected
+  tick endpoint every five minutes (`WORKER_TRIGGER_SECRET` in the bearer
+  header). Both modes call the same `runWorkerTick` in `packages/worker-core`;
+  only scheduling differs.
 - **Mongo only.** No Redis, no ORM. Mongo leases fence outbox delivery, partial
   unique indexes enforce invariants, and transactions keep outbox writes atomic
   with the alert/incident writes that create them.

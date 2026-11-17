@@ -28,9 +28,9 @@ actually enforces, what it assumes, and what remains unverified.
    for availability but not for authorization decisions.
 5. **API ↔ Resend webhook** — unauthenticated network input; verified with HMAC
    over raw bytes.
-6. **Vercel Cron ↔ tick endpoint** — shared `CRON_SECRET` over HTTPS; Vercel is
-   trusted to hold the secret and run the schedule. An external scheduler can use
-   the same endpoint with `WORKER_TRIGGER_SECRET`.
+6. **Scheduler ↔ tick endpoint** — shared `WORKER_TRIGGER_SECRET` over HTTPS;
+   GitHub Actions is trusted to hold the secret and run the schedule. Any
+   scheduler can call the same endpoint with `CRON_SECRET` instead.
 7. **Device OS ↔ encrypted queue** — SecureStore key is device-bound
    (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`); the ciphertext in AsyncStorage is not
    useful without it.
@@ -58,7 +58,7 @@ actually enforces, what it assumes, and what remains unverified.
 | T17 | Abuse/DoS on auth and writes | Mongo-backed rate limits per IP/user on invites, attendance, sync, observations, corrections, exports, and ticks | Distributed attacks against the auth library rely on Better Auth's own protections; no WAF is configured |
 | T18 | Serverless filesystem pretending delivery | Local adapter disabled when `isProduction`; sent state requires a provider id | Misconfigured `NODE_ENV` on Vercel would enable disk writes; the deployment checklist pins `NODE_ENV=production` |
 | T19 | Index drift causing slow or unsafe queries | `ensureIndexes` additive; `db:indexes:verify` fails on missing indexes; deployment runbook requires it | Verification is manual in CI/CD; add it to release checklists |
-| T20 | Stale worker silently stops delivering | Heartbeat document + admin health page; scheduled threshold derived from `WORKER_SCHEDULE_SECONDS`; the tick endpoint returns 503 on partial failure and the next cron run retries the durable outbox | Vercel Cron does not retry a failed invocation by itself, so a long platform outage only shows as an overdue heartbeat; pair with external uptime monitoring |
+| T20 | Stale worker silently stops delivering | Heartbeat document + admin health page; scheduled threshold derived from `WORKER_SCHEDULE_SECONDS`; the tick endpoint returns 503 on partial failure and the next scheduled run retries the durable outbox | Schedulers do not retry indefinitely: GitHub Actions disables scheduled workflows after 60 days of repository inactivity, and a long outage only shows as an overdue heartbeat; pair with external uptime monitoring |
 
 ## Verification status
 

@@ -9,13 +9,16 @@ Browser ──► Vercel project: web (Next.js)
 
 Expo app ──────────────────────────────────────────────► Vercel project: api
 
-Vercel Cron (every 5 min) ──► GET /api/v1/internal/worker/tick
-                               └─ drains outbox, reconciles presence/stale shifts
+GitHub Actions (every 5 min) ──► POST /api/v1/internal/worker/tick
+                                  └─ drains outbox, reconciles presence/stale shifts
 ```
 
-Vercel Cron invokes the secret-protected endpoint declared in
-`apps/api/vercel.json`. The same endpoint also accepts `POST` from any external
-scheduler (cron on a VM, Cloud Scheduler, etc.) using the same bearer secret.
+The worker is scheduled by GitHub Actions, not Vercel Cron:
+`.github/workflows/worker-tick.yml` calls the secret-protected endpoint with
+`WORKER_TRIGGER_SECRET` as a bearer token. `apps/api/vercel.json` deliberately
+declares no `crons` entry, so there is exactly one scheduler. Any other
+external scheduler (cron on a VM, Cloud Scheduler) can call the same `POST`
+endpoint with the same secret.
 
 The deployment is split into two Vercel projects because the Next.js app and the
 Express API have different runtimes, environment variables, and build outputs.
@@ -25,9 +28,9 @@ Express API have different runtimes, environment variables, and build outputs.
 ## 1. Prerequisites
 
 - A Vercel account and team. Vercel's Hobby plan is for personal, non-commercial
-  use; a business deployment needs Pro (or higher) for licensing, for
-  production-appropriate limits, and because sub-daily Vercel Cron schedules
-  require a paid plan.
+  use; a business deployment needs Pro (or higher) for licensing and
+  production-appropriate limits. Scheduling the worker with GitHub Actions
+  instead of Vercel Cron removes the paid-plan constraints on cron frequency.
 - A MongoDB Atlas cluster. Atlas clusters are replica sets, which the API needs
   for transactions. Use M0 only for smoke tests; its IOPS and connection limits
   are not sized for production traffic.
@@ -45,7 +48,7 @@ Generate secrets locally:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Use a different value for `BETTER_AUTH_SECRET` and `CRON_SECRET`.
+Use a different value for `BETTER_AUTH_SECRET` and `WORKER_TRIGGER_SECRET`.
 
 ---
 
@@ -136,9 +139,9 @@ separate database; admin endpoints in a preview can mutate whatever
 | `RESEND_WEBHOOK_SECRET` | yes | Signing secret for the webhook endpoint. |
 | `EMAIL_FROM` | yes | Must use a Resend-verified domain, e.g. `Manage <alerts@yourdomain.com>`. |
 | `EXPO_ACCESS_TOKEN` | for push | Without it, push delivery fails in production. |
-| `CRON_SECRET` | yes | 32+ random characters. Vercel Cron sends it as `Authorization: Bearer …`. The API refuses to boot without `CRON_SECRET` or `WORKER_TRIGGER_SECRET`. |
-| `WORKER_TRIGGER_SECRET` | optional | 32+ random characters for an external scheduler using `POST`. Leave empty when Vercel Cron is the only scheduler. |
-| `WORKER_SCHEDULE_SECONDS` | yes | Match the cron: `300` for the default five-minute schedule. |
+| `WORKER_TRIGGER_SECRET` | yes | 32+ random characters. The GitHub Actions workflow sends it as `Authorization: Bearer …`. The API refuses to boot without `CRON_SECRET` or `WORKER_TRIGGER_SECRET`. |
+| `CRON_SECRET` | optional | Only for Vercel Cron. Leave empty: `apps/api/vercel.json` has no `crons` entry, so this secret would be unused. |
+| `WORKER_SCHEDULE_SECONDS` | yes | Match the workflow schedule: `300` for the default five-minute cron. |
 | `OUTBOX_MAX_ATTEMPTS` | optional | Default `8`. |
 | `WORKER_LEASE_SECONDS` | optional | Default `60`. Must stay below the function duration. |
 | `PRESENCE_STALE_SECONDS` | optional | Default `300`. |
@@ -198,25 +201,44 @@ EXPO_PUBLIC_API_URL=https://api.example.com
 
 ---
 
-## 5. Schedule the worker with Vercel Cron
+## 5. Schedule the worker with GitHub Actions
 
-`apps/api/vercel.json` declares the schedule:
+`apps/api/vercel.json` intentionally declares no `crons` block; the schedule
+lives in `.github/workflows/worker-tick.yml` on the default branch:
 
-```json
-"crons": [
-  { "path": "/api/v1/internal/worker/tick", "schedule": "*/5 * * * *" }
-]
+```yaml
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 ```
 
-Vercel invokes the path with `GET` and sets `Authorization: Bearer $CRON_SECRET`
-automatically. The handler also accepts `POST` from an external scheduler, and
-returns 404 when neither `CRON_SECRET` nor `WORKER_TRIGGER_SECRET` is set so an
-unconfigured deployment does not advertise the endpoint.
+Each run sends `POST /api/v1/internal/worker/tick?max=90` with
+`Authorization: Bearer $WORKER_TRIGGER_SECRET`, retries once (a cold function
+returns 503), and fails the job when both attempts fail. `max=90` lets one tick
+clear more than a single five-minute batch; the endpoint clamps at 100 and
+self-limits to a 20-second deadline. The handler still accepts `GET` with
+`CRON_SECRET` and returns 404 while neither secret is set, so an unconfigured
+deployment does not advertise the endpoint.
 
-Sub-daily cron schedules require a paid Vercel plan; the Hobby limit (once per
-day) is far too slow for an outbox worker. If the plan only allows daily crons,
-keep the deployment on an external scheduler that calls the same endpoint with
-`POST` and a bearer secret.
+Repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+| --- | --- |
+| `MANAGE_API_URL` | API project origin, e.g. `https://api.example.com`. |
+| `WORKER_TRIGGER_SECRET` | Identical to the API project's `WORKER_TRIGGER_SECRET`. |
+| `VERCEL_PROTECTION_BYPASS` | Optional. Only when Vercel Deployment Protection is enabled on the API project; otherwise Vercel answers 401 before the request reaches the API. |
+
+Plan around these GitHub constraints:
+
+- Scheduled workflows run only from the **default branch**, and only once the
+  workflow file is merged there.
+- `*/5` is the finest granularity and actual start times drift 5–15 minutes
+  under load. The outbox is durable and the next run picks up the batch, so
+  lateness delays notifications but never loses them.
+- GitHub disables scheduled workflows after **60 days without repository
+  activity** and emails the owner. The admin health page then reports the worker
+  as overdue; re-enable the workflow from the Actions tab.
 
 Each tick heartbeats the worker, leases a bounded batch, delivers email/push,
 marks failures, reconciles presence, flags stale shifts, purges precise
@@ -238,15 +260,9 @@ tick), and returns:
 }
 ```
 
-Trigger it once manually after the first deploy (Vercel sends `CRON_SECRET` for
-scheduled calls, so a manual call must supply the same bearer token):
-
-```bash
-curl -fsS "https://api.example.com/api/v1/internal/worker/tick?max=40" \
-  -H "Authorization: Bearer $CRON_SECRET"
-```
-
-An external scheduler can use `POST` with `WORKER_TRIGGER_SECRET`:
+Verify it after the first deploy, then run the workflow by hand once
+(Actions → Worker tick → Run workflow) and confirm the output contains
+`"ok":true`:
 
 ```bash
 curl -fsS -X POST "https://api.example.com/api/v1/internal/worker/tick?max=40" \
@@ -261,10 +277,10 @@ curl -fsS -X POST "https://api.example.com/api/v1/internal/worker/tick?max=40" \
 | `*/10 * * * *` | 144 | Set `WORKER_SCHEDULE_SECONDS=600` to match. |
 | daily | 1 | Not suitable for attendance alerts. |
 
-Vercel Cron can start slightly late under load and does not retry a failed
-invocation; the next scheduled tick picks the batch up. The outbox is durable,
-so lateness delays notifications but never loses them. Expect a cold start on
-the first tick after idle traffic; the 60-second function limit accommodates it.
+GitHub Actions does not retry a failed run either, and it does not wake a
+sleeping repository; the next scheduled run picks the batch up. Expect a cold
+start on the first tick after idle traffic; the 60-second function limit
+accommodates it.
 
 ---
 
@@ -303,16 +319,21 @@ state. The stale threshold is `max(2 × WORKER_SCHEDULE_SECONDS + 120, 300)` —
 22 minutes for the default five-minute schedule. If the page reports an overdue
 scheduler:
 
-1. Open the API project in Vercel → **Cron Jobs** and check the last invocation.
-2. Confirm the deployment includes the `crons` entry from `apps/api/vercel.json`
-   and that the project is on a plan that allows sub-daily schedules.
-3. Confirm `CRON_SECRET` is set on the project (Vercel sends it automatically)
-   and matches the value the health page expects.
+1. Open the repository's **Actions → Worker tick** tab and check the last run.
+   A workflow that GitHub disabled for inactivity shows as disabled at the top
+   of the tab.
+2. Confirm the workflow file is on the default branch — scheduled runs ignore
+   the same file on other branches.
+3. Confirm `MANAGE_API_URL` and `WORKER_TRIGGER_SECRET` repository secrets exist
+   and that the secret matches the API project's variable. A mismatch returns
+   401 from the API; Deployment Protection returns 401 from Vercel before the
+   request is forwarded.
 4. Trigger the endpoint manually with the curl command above and read the JSON.
 
-Rotating `CRON_SECRET`: update the Vercel variable, redeploy so the function
-environment changes, and trigger a tick to confirm. Requests with the old secret
-return 401 immediately.
+Rotating `WORKER_TRIGGER_SECRET`: update it on the API project first, redeploy
+so the function environment changes, then update the repository secret. Requests
+signed with the old value return 401 immediately. Preview deployments need the
+same value if you run the workflow against them.
 
 Rollback:
 
@@ -330,6 +351,7 @@ Deployment order for a fresh environment:
 2. API project and environment variables; verify `/health/ready`.
 3. Web project and environment variables; sign in with MFA.
 4. Resend webhook and a test event.
-5. Vercel Cron entry in the API deployment; trigger the worker manually once.
+5. Repository secrets plus the merged `worker-tick.yml`; run the workflow once
+   by hand and confirm `"ok":true`.
 6. Invite real users from the owner console (invitation-only; there is no public
    signup).

@@ -1,44 +1,48 @@
 # Incident runbook
 
 Operational procedures for the deployed topology: Vercel API + web, MongoDB
-Atlas, Vercel Cron worker, Resend, Expo Push. Commands assume `MANAGE_API_URL`
-and `CRON_SECRET` are exported in your shell and that `mongosh "$MANAGE_URI"` is
-available for read-only checks.
+Atlas, a GitHub Actions worker tick, Resend, Expo Push. Commands assume
+`MANAGE_API_URL` and `WORKER_TRIGGER_SECRET` are exported in your shell and that
+`mongosh "$MANAGE_URI"` is available for read-only checks.
 
 Never print secrets. `set +o history` before pasting a secret into a shell.
 
 ## 1. Worker overdue or alerts not sending
 
 **Symptoms:** Admin → Health shows worker `overdue`; outbox `PENDING` grows; no
-new email/push; Vercel Cron invocations are failing.
+new email/push; the Worker tick workflow runs are failing or the workflow is
+disabled.
 
 **Diagnose**
 
 1. Admin → Health (also `GET /api/v1/admin/health` with an admin session) for
    `worker.lastHeartbeatAt`, `state`, `mode`, and outbox counts.
-2. Vercel → API project → Cron Jobs: did the last run succeed? Is the `crons`
-   entry present in the deployment?
-3. Project environment: `CRON_SECRET` (or `WORKER_TRIGGER_SECRET` for an
-   external scheduler) is set to the value the scheduler sends.
+2. GitHub → Actions → Worker tick: did the last run succeed? Is the workflow
+   enabled? GitHub disables scheduled workflows after 60 days without repository
+   activity.
+3. Project environment: `WORKER_TRIGGER_SECRET` matches the repository secret the
+   workflow sends. `CRON_SECRET` is unused — `apps/api/vercel.json` declares no
+   `crons` entry.
 4. API health:
    ```bash
    curl -sS "$MANAGE_API_URL/health/ready"
    ```
 5. Run one manual tick and read the JSON:
    ```bash
-   curl -sS "$MANAGE_API_URL/api/v1/internal/worker/tick?max=40" \
-     -H "Authorization: Bearer $CRON_SECRET"
+   curl -sS -X POST "$MANAGE_API_URL/api/v1/internal/worker/tick?max=40" \
+     -H "Authorization: Bearer $WORKER_TRIGGER_SECRET"
    ```
    `401`/`404` means the secret or route is misconfigured; `503` means the tick
    ran but something failed — inspect `ok`, `failed`.
 
 **Recover**
 
-- Secret mismatch: rotate `CRON_SECRET` in Vercel, redeploy, trigger a tick.
+- Secret mismatch: rotate `WORKER_TRIGGER_SECRET` on the API project, redeploy,
+  update the repository secret, then re-run the workflow.
 - Route 404: neither `CRON_SECRET` nor `WORKER_TRIGGER_SECRET` is set. Set one
   (32+ chars), redeploy.
-- Cron not firing: confirm the plan allows sub-daily schedules, then trigger a
-  manual tick while the schedule is repaired.
+- Schedule not firing: re-enable the workflow in Actions, confirm the file is on
+  the default branch, then trigger a manual run while the schedule is repaired.
 - Backlog after recovery: call the endpoint with `?max=100` a few times; it is
   bounded per tick and reports `remaining`.
 - Dead letters: review Admin → Health deliveries, then retry with
@@ -70,8 +74,9 @@ Vercel function logs show Mongo timeouts.
 
 1. Generate a new secret:
    `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
-2. Update `CRON_SECRET` (and `WORKER_TRIGGER_SECRET` if an external scheduler
-   uses it) in Vercel and redeploy.
+2. Update `WORKER_TRIGGER_SECRET` on the API project and redeploy, then update
+   the `WORKER_TRIGGER_SECRET` repository secret so the workflow signs with the
+   new value.
 3. Expect failed ticks between the old and new deployments; that is safe (401).
 4. Audit `outbox` for unexpected recent deliveries and `auditEvents` for admin
    actions in the exposure window.
