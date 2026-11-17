@@ -105,15 +105,27 @@ Create a Vercel project from this repository:
 How the entry works:
 
 - `apps/api/server.js` is the Vercel entry. It re-exports `dist/serverless.js`.
-- `apps/api/tsup.config.ts` builds `src/app.ts` → `dist/serverless.js`, bundling
-  the `@manage/*` workspace packages. This is deliberate: Vercel compiles the
-  function entry but does not run a general application bundler, so TypeScript
-  sources referenced through pnpm workspace packages (`"main":
-  "./src/index.ts"`) are not reliably transpiled. The pre-bundle removes that
-  dependency on platform-specific resolution.
+- `apps/api/tsup.config.ts` builds `src/app.ts` → `dist/serverless.js` as a
+  **single self-contained file**: workspace packages *and* every npm dependency
+  are inlined, so the function imports nothing but Node built-ins at runtime.
+  This is deliberate. `pnpm` with `node-linker=hoisted` puts `node_modules` at
+  the repository root, outside this project's root directory, and dependency
+  tracing can leave entries missing from the deployed function — which surfaces
+  as an opaque `500 FUNCTION_INVOCATION_FAILED` before any of our code runs.
+  Inlining removes that whole failure mode.
+- `vercel.json` declares `includeFiles: "dist/serverless.js*"` so the built
+  bundle (and its source map) is always shipped with `server.js`.
 - `dist/` is gitignored, so the build command is mandatory.
 - `apps/api/src/main.ts` is the long-running local/container entry. Never point
-  Vercel at it; it opens a port listener.
+  Vercel at it; it opens a port listener. It is built separately and keeps its
+  dependencies external.
+- The other CLI entries (`bootstrap-admin`, `verify-indexes`, `apply-indexes`,
+  `dev-db`) also stay external; they run with the repo's `node_modules` present.
+
+A missing or invalid environment variable does **not** produce this 500. The
+wrapper in `src/app.ts` catches bootstrap failures and returns
+`503 PROVIDER_UNAVAILABLE` with a request id. If you see the platform's generic
+500 page instead, the function failed to load, not to configure.
 
 `vercel.json` pins `maxDuration: 60` and `memory: 1024` for the function. The
 scheduled tick self-limits to a 20-second deadline, so it finishes well inside
