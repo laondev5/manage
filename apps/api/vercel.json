@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "express",
+  "buildCommand": "pnpm build",
+  "functions": {
+    "server.js": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/v1/internal/worker/tick",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

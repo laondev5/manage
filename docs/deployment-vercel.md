@@ -1,0 +1,335 @@
+# Deploying Manage on Vercel
+
+Production topology:
+
+```
+Browser ──► Vercel project: web (Next.js)
+              └─ /api/v1/* and /api/auth/* rewrites ──► Vercel project: api (Express)
+                                                          └─ MongoDB Atlas (replica set)
+
+Expo app ──────────────────────────────────────────────► Vercel project: api
+
+Vercel Cron (every 5 min) ──► GET /api/v1/internal/worker/tick
+                               └─ drains outbox, reconciles presence/stale shifts
+```
+
+Vercel Cron invokes the secret-protected endpoint declared in
+`apps/api/vercel.json`. The same endpoint also accepts `POST` from any external
+scheduler (cron on a VM, Cloud Scheduler, etc.) using the same bearer secret.
+
+The deployment is split into two Vercel projects because the Next.js app and the
+Express API have different runtimes, environment variables, and build outputs.
+
+---
+
+## 1. Prerequisites
+
+- A Vercel account and team. Vercel's Hobby plan is for personal, non-commercial
+  use; a business deployment needs Pro (or higher) for licensing, for
+  production-appropriate limits, and because sub-daily Vercel Cron schedules
+  require a paid plan.
+- A MongoDB Atlas cluster. Atlas clusters are replica sets, which the API needs
+  for transactions. Use M0 only for smoke tests; its IOPS and connection limits
+  are not sized for production traffic.
+- A Resend account with a verified sending domain. Email is required in
+  production: the API refuses to boot without `RESEND_API_KEY` and
+  `RESEND_WEBHOOK_SECRET`.
+- An Expo access token if the mobile app should receive push notifications.
+  Without it, the scheduled worker has no push provider, and because local disk
+  delivery is disabled in production, push deliveries fail and eventually land in
+  the dead-letter state.
+
+Generate secrets locally:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Use a different value for `BETTER_AUTH_SECRET` and `CRON_SECRET`.
+
+---
+
+## 2. Prepare MongoDB
+
+1. Create the cluster and a database named `manage` (or your choice; it must match
+   `MONGODB_DB_NAME`).
+2. Create a database user with `readWrite` on that database only. Do not use an
+   Atlas admin user.
+3. Network access: Vercel functions have dynamic egress addresses. Add
+   `0.0.0.0/0` and rely on the database user credentials, or use Vercel Secure
+   Compute (Enterprise) if private networking is required.
+4. Copy the SRV connection string and keep `retryWrites=true`.
+
+Create indexes and verify them **once from a trusted machine**, not from a
+serverless request:
+
+```bash
+MONGODB_URI='mongodb+srv://...' MONGODB_DB_NAME=manage pnpm db:indexes:apply
+MONGODB_URI='mongodb+srv://...' MONGODB_DB_NAME=manage pnpm db:indexes:verify
+```
+
+`src/vercel.ts` intentionally never creates indexes or runs migrations at
+request time; doing so would add latency and race between cold instances. Re-run
+`db:indexes:apply` after every deploy that changes an index.
+
+Create the first platform administrator before inviting anyone:
+
+```bash
+MONGODB_URI='mongodb+srv://...' MONGODB_DB_NAME=manage \
+  pnpm bootstrap:admin -- --email you@example.com --name "Your Name" \
+  --password 'a-long-unique-password' --org "Your Organization"
+```
+
+The command refuses to run if a platform administrator already exists. It does
+not create a default password, and it does not enroll the account in MFA; enroll
+MFA at first sign-in. `pnpm seed` is demo data for local development only.
+
+---
+
+## 3. Deploy the API project
+
+Create a Vercel project from this repository:
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `apps/api` |
+| Framework Preset | Express |
+| Build Command | `pnpm build` (also set in `apps/api/vercel.json`) |
+| Output Directory | leave empty |
+| Install Command | leave default (Vercel detects `pnpm-lock.yaml` at the repo root) |
+| Node.js Version | 22.x |
+
+How the entry works:
+
+- `apps/api/server.js` is the Vercel entry. It re-exports `dist/serverless.js`.
+- `apps/api/tsup.config.ts` builds `src/app.ts` → `dist/serverless.js`, bundling
+  the `@manage/*` workspace packages. This is deliberate: Vercel compiles the
+  function entry but does not run a general application bundler, so TypeScript
+  sources referenced through pnpm workspace packages (`"main":
+  "./src/index.ts"`) are not reliably transpiled. The pre-bundle removes that
+  dependency on platform-specific resolution.
+- `dist/` is gitignored, so the build command is mandatory.
+- `apps/api/src/main.ts` is the long-running local/container entry. Never point
+  Vercel at it; it opens a port listener.
+
+`vercel.json` pins `maxDuration: 60` and `memory: 1024` for the function. The
+scheduled tick self-limits to a 20-second deadline, so it finishes well inside
+the limit.
+
+### API environment variables
+
+Set these for **Production** and **Preview**. Preview deployments should use a
+separate database; admin endpoints in a preview can mutate whatever
+`MONGODB_URI` points at.
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `NODE_ENV` | yes | `production`. Enables HTTPS/origin/secret validation. |
+| `MONGODB_URI` | yes | Atlas SRV string, `retryWrites=true`. |
+| `MONGODB_DB_NAME` | yes | e.g. `manage`. |
+| `MONGODB_MAX_POOL_SIZE` | yes | `5`–`10` on serverless. Every warm instance keeps its own pool. |
+| `BETTER_AUTH_SECRET` | yes | 32+ random characters. Rotating it signs everyone out. |
+| `AUTH_BASE_URL` | yes | The **web** origin, e.g. `https://app.example.com`. Email links and Better Auth callbacks then route through the Next.js rewrite and stay first-party. |
+| `TRUSTED_WEB_ORIGINS` | yes | The web origin, comma-separated, HTTPS only. |
+| `MOBILE_SCHEME` | yes | `manage` unless you changed the Expo scheme. |
+| `RESEND_API_KEY` | yes | Required; there is no disk fallback in production. |
+| `RESEND_WEBHOOK_SECRET` | yes | Signing secret for the webhook endpoint. |
+| `EMAIL_FROM` | yes | Must use a Resend-verified domain, e.g. `Manage <alerts@yourdomain.com>`. |
+| `EXPO_ACCESS_TOKEN` | for push | Without it, push delivery fails in production. |
+| `CRON_SECRET` | yes | 32+ random characters. Vercel Cron sends it as `Authorization: Bearer …`. The API refuses to boot without `CRON_SECRET` or `WORKER_TRIGGER_SECRET`. |
+| `WORKER_TRIGGER_SECRET` | optional | 32+ random characters for an external scheduler using `POST`. Leave empty when Vercel Cron is the only scheduler. |
+| `WORKER_SCHEDULE_SECONDS` | yes | Match the cron: `300` for the default five-minute schedule. |
+| `OUTBOX_MAX_ATTEMPTS` | optional | Default `8`. |
+| `WORKER_LEASE_SECONDS` | optional | Default `60`. Must stay below the function duration. |
+| `PRESENCE_STALE_SECONDS` | optional | Default `300`. |
+| `STALE_SHIFT_HOURS` | optional | Default `16`. |
+| `LOCATION_RETENTION_DAYS` | optional | Default `7`. |
+| `LOG_LEVEL` | optional | `info` in production. |
+
+Do not set `ENABLE_DEV_TOKENS`; production boot fails if it is enabled. `PORT` and
+`TRUST_PROXY` are irrelevant on Vercel — the app trusts one proxy hop
+automatically when `VERCEL=1`, and Vercel owns the port.
+
+After deploying, check:
+
+```bash
+curl -fsS https://api.example.com/health/live
+curl -fsS https://api.example.com/health/ready   # pings MongoDB
+curl -fsS https://api.example.com/api/v1/health  # public service marker
+```
+
+If the first request returns `503 PROVIDER_UNAVAILABLE`, environment validation
+or the Mongo connection failed. Read the function logs and use the request ID in
+the response; the API logs no secrets.
+
+---
+
+## 4. Deploy the web project
+
+Create a second Vercel project:
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `apps/web` |
+| Framework Preset | Next.js (auto-detected) |
+| Build Command | default |
+| Output Directory | default |
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `API_ORIGIN` | yes | The API project origin, e.g. `https://api.example.com`. Server-only. Used by Next rewrites for `/api/v1/*` and `/api/auth/*`. |
+| `NEXT_PUBLIC_API_BASE_URL` | no | Leave **empty** in the normal setup. The browser then calls the web origin, and Next proxies to the API. |
+
+Leaving `NEXT_PUBLIC_API_BASE_URL` empty keeps auth cookies first-party. If the
+browser called the API origin directly, Better Auth's `sameSite=lax` cookie would
+not be sent on cross-site requests, and the session would appear to vanish after
+sign-in. If you must use an absolute API URL, make both hosts subdomains of the
+same registrable domain and understand the cookie implications before doing so.
+
+Preview deployments: either give each preview its own Atlas database, or turn
+preview deployments off for the web project if previews would share production
+data. Previews inherit `API_ORIGIN` and will proxy to production otherwise.
+
+Mobile builds point at the API directly:
+
+```bash
+EXPO_PUBLIC_API_URL=https://api.example.com
+```
+
+---
+
+## 5. Schedule the worker with Vercel Cron
+
+`apps/api/vercel.json` declares the schedule:
+
+```json
+"crons": [
+  { "path": "/api/v1/internal/worker/tick", "schedule": "*/5 * * * *" }
+]
+```
+
+Vercel invokes the path with `GET` and sets `Authorization: Bearer $CRON_SECRET`
+automatically. The handler also accepts `POST` from an external scheduler, and
+returns 404 when neither `CRON_SECRET` nor `WORKER_TRIGGER_SECRET` is set so an
+unconfigured deployment does not advertise the endpoint.
+
+Sub-daily cron schedules require a paid Vercel plan; the Hobby limit (once per
+day) is far too slow for an outbox worker. If the plan only allows daily crons,
+keep the deployment on an external scheduler that calls the same endpoint with
+`POST` and a bearer secret.
+
+Each tick heartbeats the worker, leases a bounded batch, delivers email/push,
+marks failures, reconciles presence, flags stale shifts, purges precise
+coordinates past `LOCATION_RETENTION_DAYS` (up to 500 rows per collection per
+tick), and returns:
+
+```json
+{
+  "workerId": "scheduled-…",
+  "delivered": 12,
+  "failed": 0,
+  "remaining": false,
+  "reconciled": true,
+  "presenceReconciled": 0,
+  "staleShiftsFlagged": 0,
+  "locationsPurged": 0,
+  "durationMs": 2130,
+  "ok": true
+}
+```
+
+Trigger it once manually after the first deploy (Vercel sends `CRON_SECRET` for
+scheduled calls, so a manual call must supply the same bearer token):
+
+```bash
+curl -fsS "https://api.example.com/api/v1/internal/worker/tick?max=40" \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+An external scheduler can use `POST` with `WORKER_TRIGGER_SECRET`:
+
+```bash
+curl -fsS -X POST "https://api.example.com/api/v1/internal/worker/tick?max=40" \
+  -H "Authorization: Bearer $WORKER_TRIGGER_SECRET"
+```
+
+### Cadence
+
+| Schedule | Runs/day | Notes |
+| --- | --- | --- |
+| `*/5 * * * *` (default) | 288 | Pair with `WORKER_SCHEDULE_SECONDS=300`. |
+| `*/10 * * * *` | 144 | Set `WORKER_SCHEDULE_SECONDS=600` to match. |
+| daily | 1 | Not suitable for attendance alerts. |
+
+Vercel Cron can start slightly late under load and does not retry a failed
+invocation; the next scheduled tick picks the batch up. The outbox is durable,
+so lateness delays notifications but never loses them. Expect a cold start on
+the first tick after idle traffic; the 60-second function limit accommodates it.
+
+---
+
+## 6. Configure the Resend webhook
+
+1. In Resend, add a webhook to `https://api.example.com/api/v1/webhooks/resend`.
+2. Subscribe to delivery, bounce, and complaint events.
+3. Copy the signing secret into `RESEND_WEBHOOK_SECRET` and redeploy the API.
+4. Send a test event. The API verifies the signature against the raw request
+   body and rejects timestamps older than five minutes.
+
+The webhook route is mounted before the JSON body parser on purpose. Do not add
+`express.json()` or a platform body parser ahead of it; signature verification
+needs the exact bytes Resend signed. The API never reads Vercel's lazy
+`request.body` helper.
+
+A delivered notification updates the outbox item's delivery report. Bounces and
+failures record the provider error on the item; there is no automatic address
+suppression, so remove a bad address in the product rather than expecting Resend
+events to do it. Duplicate webhook events are ignored by event ID. Check the admin
+health page for failed deliveries and dead-lettered outbox items.
+
+---
+
+## 7. Health, alerting, and recovery
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/health/live` | Process liveness; no dependencies. |
+| `/health/ready` | MongoDB ping; use for uptime checks. |
+| `/api/v1/health` | Public service marker. |
+| `/api/v1/admin/health` | Authenticated console data (MFA + capability required). |
+
+The admin health page shows the worker heartbeat and the `scheduled` worker
+state. The stale threshold is `max(2 × WORKER_SCHEDULE_SECONDS + 120, 300)` —
+22 minutes for the default five-minute schedule. If the page reports an overdue
+scheduler:
+
+1. Open the API project in Vercel → **Cron Jobs** and check the last invocation.
+2. Confirm the deployment includes the `crons` entry from `apps/api/vercel.json`
+   and that the project is on a plan that allows sub-daily schedules.
+3. Confirm `CRON_SECRET` is set on the project (Vercel sends it automatically)
+   and matches the value the health page expects.
+4. Trigger the endpoint manually with the curl command above and read the JSON.
+
+Rotating `CRON_SECRET`: update the Vercel variable, redeploy so the function
+environment changes, and trigger a tick to confirm. Requests with the old secret
+return 401 immediately.
+
+Rollback:
+
+- Use Vercel Instant Rollback to return the API or web project to a previous
+  deployment. Rollback does not un-send notifications.
+- Database changes in this project are additive indexes applied with
+  `db:indexes:apply`; there are no destructive migrations in the deploy path.
+- Outbox items that were leased but not completed are reclaimed after
+  `WORKER_LEASE_SECONDS`; dead-lettered items can be retried from the admin
+  console after fixing the provider.
+
+Deployment order for a fresh environment:
+
+1. Atlas cluster, database user, indexes, first platform admin.
+2. API project and environment variables; verify `/health/ready`.
+3. Web project and environment variables; sign in with MFA.
+4. Resend webhook and a test event.
+5. Vercel Cron entry in the API deployment; trigger the worker manually once.
+6. Invite real users from the owner console (invitation-only; there is no public
+   signup).

@@ -1,0 +1,87 @@
+{
+  "expo": {
+    "name": "Manage",
+    "slug": "manage",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "manage",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Manage uses your location only while you are clocked in, to confirm you are on site.",
+          "locationAlwaysPermission": "Manage records your location while you are clocked in so departure alerts stay accurate.",
+          "locationWhenInUsePermission": "Manage checks that you are within the site radius when you clock in.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2457D6"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo-light.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#101D35",
+          "dark": {
+            "image": "./assets/logo-light.png",
+            "backgroundColor": "#101D35"
+          }
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.manage.attendance",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Manage confirms site presence only while you are clocked in.",
+        "NSLocationWhenInUseUsageDescription": "Manage checks that you are within the site radius when you clock in."
+      }
+    },
+    "android": {
+      "package": "com.manage.attendance",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F5F7FB"
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": ""
+        }
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "manage",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @manage/api --filter @manage/web dev",
+    "dev:api": "pnpm --filter @manage/api dev",
+    "dev:worker": "pnpm --filter @manage/worker dev",
+    "dev:web": "pnpm --filter @manage/web dev",
+    "dev:mobile": "pnpm --filter @manage/mobile start",
+    "db:dev": "pnpm --filter @manage/api db:dev",
+    "db:indexes:verify": "pnpm --filter @manage/api db:verify",
+    "db:indexes:apply": "pnpm --filter @manage/api db:indexes:apply",
+    "seed": "pnpm --filter @manage/api seed",
+    "bootstrap:admin": "pnpm --filter @manage/api bootstrap:admin",
+    "build": "pnpm -r --filter @manage/api --filter @manage/worker --filter @manage/web build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "test": "pnpm -r test",
+    "test:integration": "pnpm --filter @manage/api test:integration",
+    "security:check": "node scripts/security-check.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "26.6.6",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^16.5.0",
+    "tslib": "2.8.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.73.0"
+  }
+}
