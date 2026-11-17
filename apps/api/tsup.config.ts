@@ -4,7 +4,6 @@ export default defineConfig({
   entry: {
     server: 'src/main.ts',
     serverless: 'src/app.ts',
-    seed: 'src/scripts/seed.ts',
     'bootstrap-admin': 'src/scripts/bootstrap-admin.ts',
     'verify-indexes': 'src/scripts/verify-indexes.ts',
     'apply-indexes': 'src/scripts/apply-indexes.ts',
