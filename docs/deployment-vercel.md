@@ -104,7 +104,10 @@ Create a Vercel project from this repository:
 
 How the entry works:
 
-- `apps/api/server.js` is the Vercel entry. It re-exports `dist/serverless.js`.
+- `apps/api/server.js` is the Vercel entry. It imports `dist/serverless.js`
+  lazily from inside the handler, so a bundle that fails to load is logged and
+  answered with the usual `503 PROVIDER_UNAVAILABLE` JSON instead of the
+  platform's anonymous `500 FUNCTION_INVOCATION_FAILED`.
 - `apps/api/tsup.config.ts` builds `src/app.ts` → `dist/serverless.js` as a
   **single self-contained file**: workspace packages *and* every npm dependency
   are inlined, so the function imports nothing but Node built-ins at runtime.
