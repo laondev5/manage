@@ -39,11 +39,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const saved =
         typeof window === 'undefined' ? null : window.localStorage.getItem(ORG_KEY);
-      const result = await api<MeResponse>('/api/v1/me', { orgId: saved });
+      // /me must not carry the saved org header: a stale id (revoked membership,
+      // different backend) would 403 the very call that reconciles it.
+      const result = await api<MeResponse>('/api/v1/me');
       meRef.current = result;
       setMe(result);
       setError(null);
-      const allowed = new Set(result.memberships.map((entry) => entry.organizationId));
+      const allowed = new Set(
+        result.memberships
+          .filter((entry) => entry.status === 'ACTIVE')
+          .map((entry) => entry.organizationId),
+      );
       const nextOrg =
         (saved && allowed.has(saved) ? saved : null) ?? result.activeOrganizationId ?? null;
       setActiveOrgId(nextOrg);
