@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import type { AdminInviteResult, AdminUserSummary, OrganizationSummary, PlatformSiteSummary } from '../../../../contracts/index';
 import { RequireAdmin } from '@/components/app-shell';
 import { membershipBadge } from '@/components/status';
-import { IconMail, IconPlus, IconShield } from '@/components/icons';
+import { IconMail, IconPlus, IconShield, IconX } from '@/components/icons';
 import {
   Avatar,
   Badge,
@@ -83,9 +83,11 @@ function UsersContent() {
 }
 
 function UsersPanel() {
+  const { me } = useAuth();
   const [query, setQuery] = useState('');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [reactivating, setReactivating] = useState<AdminUserSummary | null>(null);
+  const [deleting, setDeleting] = useState<AdminUserSummary | null>(null);
   const { data, error, loading, reload } = useApiData<AdminUserSummary[]>('/api/v1/admin/users');
 
   const filtered = (data ?? []).filter((user) => {
@@ -124,6 +126,7 @@ function UsersPanel() {
               <Th>Security</Th>
               <Th>Memberships</Th>
               <Th>Created</Th>
+              <Th />
             </tr>
           </thead>
           <tbody>
@@ -148,6 +151,9 @@ function UsersPanel() {
                     </Badge>
                     {user.accountStatus === 'DISABLED' ? (
                       <Badge tone="amber">Deactivated</Badge>
+                    ) : null}
+                    {user.accountStatus === 'DELETED' ? (
+                      <Badge tone="red">Deleted</Badge>
                     ) : null}
                   </div>
                 </Td>
@@ -181,6 +187,17 @@ function UsersPanel() {
                     ) : null}
                   </div>
                 </Td>
+                <Td className="text-right">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleting(user)}
+                    disabled={user.id === me?.user.id || user.accountStatus === 'DELETED'}
+                    icon={<IconX className="h-3.5 w-3.5" />}
+                  >
+                    Delete
+                  </Button>
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -201,6 +218,11 @@ function UsersPanel() {
         user={reactivating}
         onClose={() => setReactivating(null)}
         onReactivated={reload}
+      />
+      <DeleteUserDialog
+        user={deleting}
+        onClose={() => setDeleting(null)}
+        onDeleted={reload}
       />
     </Card>
   );
@@ -291,6 +313,109 @@ function ReactivateDialog({
         onDone={() => {
           setReauth(false);
           if (pendingRetry) void submit();
+        }}
+      />
+    </>
+  );
+}
+
+function DeleteUserDialog({
+  user,
+  onClose,
+  onDeleted,
+}: {
+  user: AdminUserSummary | null;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const { request, me } = useAuth();
+  const flash = useFlash();
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reauth, setReauth] = useState(false);
+  const [pendingRetry, setPendingRetry] = useState(false);
+
+  const submit = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (!user) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/api/v1/admin/users/${user.id}`, {
+        method: 'DELETE',
+        body: { reason: reason.trim() },
+      });
+      flash(`${user.name} was deleted. Access was revoked; attendance history was retained.`);
+      setReason('');
+      onClose();
+      onDeleted();
+    } catch (cause) {
+      if (isRecentAuthError(cause)) {
+        setPendingRetry(true);
+        setReauth(true);
+        setError('Your session is older than 15 minutes. Confirm it is you, then the deletion will retry.');
+      } else {
+        setError(errorMessage(cause, 'The account could not be deleted.'));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Modal
+        open={Boolean(user)}
+        onClose={busy ? () => undefined : onClose}
+        title="Delete account"
+        description={user?.email}
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button
+              variant="danger"
+              size="sm"
+              type="submit"
+              form="delete-user"
+              loading={busy}
+              disabled={reason.trim().length < 5 || user?.id === me?.user.id}
+            >
+              Delete account
+            </Button>
+          </>
+        }
+      >
+        <form id="delete-user" onSubmit={submit} className="space-y-4" noValidate>
+          {error ? <InlineError>{error}</InlineError> : null}
+          <InlineNotice tone="warn">
+            This revokes all memberships, site assignments, sessions, devices, grants, and pending
+            invitations. The identity remains so attendance and audit history stay attributable. This
+            cannot be undone from the app.
+          </InlineNotice>
+          <Field label="Reason" htmlFor="delete-user-reason" hint="At least 5 characters. Recorded in the audit log.">
+            <Input
+              id="delete-user-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Why access is being permanently removed"
+            />
+          </Field>
+        </form>
+      </Modal>
+      <ReauthDialog
+        open={reauth}
+        email={me?.user.email ?? ''}
+        onClose={() => {
+          setReauth(false);
+          setPendingRetry(false);
+        }}
+        onDone={() => {
+          setReauth(false);
+          if (pendingRetry) {
+            setPendingRetry(false);
+            void submit();
+          }
         }}
       />
     </>

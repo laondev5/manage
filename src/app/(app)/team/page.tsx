@@ -7,6 +7,7 @@ import type {
   Page,
   RosterEntry,
   SiteSummary,
+  TeamMemberDetail,
 } from '../../../contracts/index';
 import { RequireCapability } from '@/components/app-shell';
 import { correctionBadge, presenceBadge } from '@/components/status';
@@ -21,6 +22,8 @@ import {
   ErrorState,
   Field,
   InlineError,
+  InlineNotice,
+  Input,
   Modal,
   PageHeader,
   SearchInput,
@@ -75,6 +78,7 @@ function TeamContent() {
   const [tab, setTab] = useState<Tab>('staff');
   const [query, setQuery] = useState('');
   const [siteId, setSiteId] = useState('ALL');
+  const [removing, setRemoving] = useState<TeamRow | null>(null);
 
   const sites = useApiData<SiteSummary[]>('/api/v1/sites');
   const [rows, setRows] = useState<TeamRow[]>([]);
@@ -204,6 +208,7 @@ function TeamContent() {
                   <Th>Assigned sites</Th>
                   <Th>Presence</Th>
                   <Th>Clocked in</Th>
+                  <Th />
                 </tr>
               </thead>
               <tbody>
@@ -231,6 +236,16 @@ function TeamContent() {
                     <Td className="tabular text-muted">
                       {row.clockedInAt ? formatDateTime(row.clockedInAt) : '—'}
                     </Td>
+                    <Td className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setRemoving(row)}
+                        icon={<IconX className="h-3.5 w-3.5" />}
+                      >
+                        Remove
+                      </Button>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -250,7 +265,133 @@ function TeamContent() {
       ) : (
         <CorrectionsPanel />
       )}
+      <RemoveTeamMemberDialog
+        member={removing}
+        onClose={() => setRemoving(null)}
+        onRemoved={() => setTick((value) => value + 1)}
+      />
     </div>
+  );
+}
+
+function RemoveTeamMemberDialog({
+  member,
+  onClose,
+  onRemoved,
+}: {
+  member: TeamRow | null;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const { request } = useAuth();
+  const flash = useFlash();
+  const [detail, setDetail] = useState<TeamMemberDetail | null>(null);
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!member) {
+      setDetail(null);
+      setReason('');
+      setLoadError(null);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    setDetail(null);
+    request<TeamMemberDetail>(`/api/v1/team/${member.memberId}`)
+      .then((result) => {
+        if (!cancelled) setDetail(result);
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setLoadError(errorMessage(cause, 'The member details could not be loaded.'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [member, request]);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!member || !detail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/api/v1/team/${member.memberId}`, {
+        method: 'DELETE',
+        body: {
+          reason: reason.trim(),
+          expectedVersion: detail.member.membershipVersion,
+        },
+      });
+      flash(`${member.name} was removed from the team. Their account and history remain.`);
+      onClose();
+      onRemoved();
+    } catch (cause) {
+      setError(errorMessage(cause, 'The member could not be removed from the team.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={Boolean(member)}
+      onClose={busy ? () => undefined : onClose}
+      title="Remove from team"
+      description={member ? `${member.name} · ${member.email}` : undefined}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            type="submit"
+            form="remove-team-member"
+            loading={busy}
+            disabled={!detail || busy || reason.trim().length < 5}
+          >
+            Remove from team
+          </Button>
+        </>
+      }
+    >
+      {loading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : loadError ? (
+        <InlineError>{loadError}</InlineError>
+      ) : (
+        <form id="remove-team-member" onSubmit={submit} className="space-y-4" noValidate>
+          {error ? <InlineError>{error}</InlineError> : null}
+          <InlineNotice tone="warn">
+            This revokes the membership in your organization, ends all their site assignments, and
+            clears any lead or inspector roles. Their account and attendance history stay intact, and
+            you can invite them again later.
+          </InlineNotice>
+          <Field label="Reason" htmlFor="remove-team-reason" hint="At least 5 characters. Recorded in the audit log.">
+            <Input
+              id="remove-team-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Why this person is leaving the team"
+            />
+          </Field>
+        </form>
+      )}
+    </Modal>
   );
 }
 

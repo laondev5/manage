@@ -1,6 +1,6 @@
 'use client';
 
-import { useParams } from 'next/navigation';import { useState } from 'react';
+import { useParams } from 'next/navigation';import { useEffect, useState } from 'react';
 import type { InvitationSummary, RosterEntry, SiteDetail } from '../../../../contracts/index';
 import { buildSitePayload, validateSiteForm } from '@/lib/site-payload';
 import { SiteForm, siteToForm, type SiteFormValues } from '@/components/site-form';
@@ -15,6 +15,7 @@ import {
   IconPlus,
   IconRefresh,
   IconUsers,
+  IconX,
 } from '@/components/icons';
 import {
   Avatar,
@@ -161,12 +162,15 @@ export default function SiteDetailPage() {
 
       {tab === 'roster' ? (
         <RosterPanel
+          siteId={siteId}
           entries={rosterItems}
           loading={roster.loading}
           error={roster.error}
           onRetry={roster.reload}
+          onRemoved={roster.reload}
           onInvite={() => setInviteOpen(true)}
           canInvite={hasCapability(me, 'owner.team')}
+          canManage={hasCapability(me, 'owner.team')}
         />
       ) : null}
 
@@ -210,21 +214,28 @@ export default function SiteDetailPage() {
 }
 
 function RosterPanel({
+  siteId,
   entries,
   loading,
   error,
   onRetry,
+  onRemoved,
   onInvite,
   canInvite,
+  canManage,
 }: {
+  siteId: string;
   entries: RosterEntry[];
   loading: boolean;
   error: unknown;
   onRetry: () => void;
+  onRemoved: () => void;
   onInvite: () => void;
   canInvite: boolean;
+  canManage: boolean;
 }) {
   const [query, setQuery] = useState('');
+  const [removing, setRemoving] = useState<RosterEntry | null>(null);
   const filtered = entries.filter((entry) => {
     if (!query) return true;
     const needle = query.toLowerCase();
@@ -259,6 +270,7 @@ function RosterPanel({
               <Th>Presence</Th>
               <Th>Clocked in</Th>
               <Th>Last location</Th>
+              <Th />
             </tr>
           </thead>
           <tbody>
@@ -281,6 +293,18 @@ function RosterPanel({
                 <Td>{presenceBadge(entry.presence)}</Td>
                 <Td className="tabular">{entry.clockedInAt ? formatDateTime(entry.clockedInAt) : '—'}</Td>
                 <Td className="text-muted">{entry.lastUpdateAt ? relativeTime(entry.lastUpdateAt) : '—'}</Td>
+                <Td className="text-right">
+                  {canManage ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setRemoving(entry)}
+                      icon={<IconX className="h-3.5 w-3.5" />}
+                    >
+                      Remove
+                    </Button>
+                  ) : null}
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -303,7 +327,100 @@ function RosterPanel({
           }
         />
       )}
+      <RemoveSiteMemberDialog
+        siteId={siteId}
+        entry={removing}
+        onClose={() => setRemoving(null)}
+        onRemoved={onRemoved}
+      />
     </Card>
+  );
+}
+
+function RemoveSiteMemberDialog({
+  siteId,
+  entry,
+  onClose,
+  onRemoved,
+}: {
+  siteId: string;
+  entry: RosterEntry | null;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const { request } = useAuth();
+  const flash = useFlash();
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!entry) {
+      setReason('');
+      setError(null);
+    }
+  }, [entry]);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!entry) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/api/v1/sites/${siteId}/assignments/${entry.assignmentId}`, {
+        method: 'DELETE',
+        body: { reason: reason.trim() },
+      });
+      flash(`${entry.name} was removed from this site. Their account and history remain.`);
+      onClose();
+      onRemoved();
+    } catch (cause) {
+      setError(errorMessage(cause, 'The member could not be removed from this site.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={Boolean(entry)}
+      onClose={busy ? () => undefined : onClose}
+      title="Remove from this site"
+      description={entry ? `${entry.name} · ${entry.email}` : undefined}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            type="submit"
+            form="remove-site-member"
+            loading={busy}
+            disabled={reason.trim().length < 5}
+          >
+            Remove from site
+          </Button>
+        </>
+      }
+    >
+      <form id="remove-site-member" onSubmit={submit} className="space-y-4" noValidate>
+        {error ? <InlineError>{error}</InlineError> : null}
+        <InlineNotice tone="warn">
+          This ends their assignment here and clears any site lead or inspector role. Their organization
+          membership and attendance history stay intact.
+        </InlineNotice>
+        <Field label="Reason" htmlFor="remove-site-reason" hint="At least 5 characters. Recorded in the audit log.">
+          <Input
+            id="remove-site-reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why this member no longer works at this site"
+          />
+        </Field>
+      </form>
+    </Modal>
   );
 }
 

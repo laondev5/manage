@@ -60,7 +60,7 @@ export const adminUserSummarySchema = z.object({
   email: z.string(),
   emailVerified: z.boolean(),
   twoFactorEnabled: z.boolean(),
-  accountStatus: z.enum(['ACTIVE', 'DISABLED']),
+  accountStatus: z.enum(['ACTIVE', 'DISABLED', 'DELETED']),
   memberships: z.array(
     z.object({
       organizationId: z.string(),
@@ -219,3 +219,18 @@ export const adminInviteResultSchema = z.object({
 });
 
 export type AdminInviteResult = z.infer<typeof adminInviteResultSchema>;
+
+export const adminUserDeleteSummarySchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  status: z.literal('DELETED'),
+  membershipsRevoked: z.number(),
+  assignmentsEnded: z.number(),
+  invitationsRevoked: z.number(),
+  grantsRevoked: z.number(),
+  sitesCleared: z.number(),
+  devicesRevoked: z.number(),
+  sessionsRevoked: z.number(),
+});
+
+export type AdminUserDeleteSummary = z.infer<typeof adminUserDeleteSummarySchema>;

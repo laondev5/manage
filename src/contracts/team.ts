@@ -10,6 +10,13 @@ export const memberStatusUpdateSchema = z.strictObject({
 
 export type MemberStatusUpdate = z.infer<typeof memberStatusUpdateSchema>;
 
+export const memberRemovalSchema = z.strictObject({
+  reason: z.string().trim().min(5).max(300),
+  expectedVersion: z.number().int().min(1),
+});
+
+export type MemberRemoval = z.infer<typeof memberRemovalSchema>;
+
 export const memberQuerySchema = z.strictObject({
   message: z.string().trim().min(5, 'Write at least 5 characters.').max(500),
   siteId: objectIdSchema.optional(),

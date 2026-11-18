@@ -139,6 +139,7 @@ export const assignmentCreateSchema = z.strictObject({
 
 export const rosterEntrySchema = z.object({
   memberId: z.string(),
+  assignmentId: z.string(),
   name: z.string(),
   email: z.string(),
   role: roleSchema,
