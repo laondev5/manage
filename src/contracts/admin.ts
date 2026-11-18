@@ -60,6 +60,7 @@ export const adminUserSummarySchema = z.object({
   email: z.string(),
   emailVerified: z.boolean(),
   twoFactorEnabled: z.boolean(),
+  accountStatus: z.enum(['ACTIVE', 'DISABLED']),
   memberships: z.array(
     z.object({
       organizationId: z.string(),
@@ -194,3 +195,27 @@ export const ownerOverviewSchema = z.object({
 });
 
 export type OwnerOverview = z.infer<typeof ownerOverviewSchema>;
+
+// Mirrored from api/src/contracts/admin.ts for the admin management screens.
+export const organizationDeleteSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  membershipsRevoked: z.number(),
+  assignmentsEnded: z.number(),
+  sitesArchived: z.number(),
+  invitationsRevoked: z.number(),
+  grantsRevoked: z.number(),
+  usersDeactivated: z.number(),
+});
+
+export type OrganizationDeleteSummary = z.infer<typeof organizationDeleteSummarySchema>;
+
+export const adminInviteResultSchema = z.object({
+  ok: z.literal(true),
+  email: z.string(),
+  role: z.enum(['STAFF', 'SITE_OWNER', 'PLATFORM_ADMIN']),
+  expiresAt: z.string(),
+  developmentToken: z.string().nullable(),
+});
+
+export type AdminInviteResult = z.infer<typeof adminInviteResultSchema>;

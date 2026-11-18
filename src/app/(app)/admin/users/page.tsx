@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
-import type { AdminUserSummary, OrganizationSummary, PlatformSiteSummary } from '../../../../contracts/index';
+import { useEffect, useState } from 'react';
+import type { AdminInviteResult, AdminUserSummary, OrganizationSummary, PlatformSiteSummary } from '../../../../contracts/index';
 import { RequireAdmin } from '@/components/app-shell';
 import { membershipBadge } from '@/components/status';
 import { IconMail, IconPlus, IconShield } from '@/components/icons';
@@ -84,6 +84,8 @@ function UsersContent() {
 
 function UsersPanel() {
   const [query, setQuery] = useState('');
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [reactivating, setReactivating] = useState<AdminUserSummary | null>(null);
   const { data, error, loading, reload } = useApiData<AdminUserSummary[]>('/api/v1/admin/users');
 
   const filtered = (data ?? []).filter((user) => {
@@ -97,7 +99,14 @@ function UsersPanel() {
       <CardHeader
         title="Accounts"
         description="MFA is mandatory for owners and admins; the server blocks their workspace until it is enrolled."
-        action={<SearchInput value={query} onChange={setQuery} placeholder="Search users" className="w-56" />}
+        action={
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => setInviteOpen(true)} icon={<IconPlus className="h-3.5 w-3.5" />}>
+              Invite administrator
+            </Button>
+            <SearchInput value={query} onChange={setQuery} placeholder="Search users" className="w-56" />
+          </div>
+        }
       />
       {loading && !data ? (
         <div className="space-y-2 p-5">
@@ -137,6 +146,9 @@ function UsersPanel() {
                     <Badge tone={user.twoFactorEnabled ? 'blue' : 'slate'}>
                       {user.twoFactorEnabled ? 'MFA' : 'No MFA'}
                     </Badge>
+                    {user.accountStatus === 'DISABLED' ? (
+                      <Badge tone="amber">Deactivated</Badge>
+                    ) : null}
                   </div>
                 </Td>
                 <Td>
@@ -159,7 +171,16 @@ function UsersPanel() {
                     <span className="text-[12px] text-muted">No membership</span>
                   )}
                 </Td>
-                <Td className="text-muted">{formatDate(user.createdAt)}</Td>
+                <Td className="text-muted">
+                  <div className="flex items-center gap-2">
+                    <span>{formatDate(user.createdAt)}</span>
+                    {user.accountStatus === 'DISABLED' ? (
+                      <Button variant="ghost" size="sm" onClick={() => setReactivating(user)}>
+                        Reactivate
+                      </Button>
+                    ) : null}
+                  </div>
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -171,7 +192,108 @@ function UsersPanel() {
           description="Accounts are created only through staff invitations or seeded administrators."
         />
       )}
+      <InviteAdminDialog
+        open={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+        onInvited={reload}
+      />
+      <ReactivateDialog
+        user={reactivating}
+        onClose={() => setReactivating(null)}
+        onReactivated={reload}
+      />
     </Card>
+  );
+}
+
+function ReactivateDialog({
+  user,
+  onClose,
+  onReactivated,
+}: {
+  user: AdminUserSummary | null;
+  onClose: () => void;
+  onReactivated: () => void;
+}) {
+  const { request, me } = useAuth();
+  const flash = useFlash();
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reauth, setReauth] = useState(false);
+  const [pendingRetry, setPendingRetry] = useState(false);
+
+  const submit = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (!user) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/api/v1/admin/users/${user.id}/reactivate`, {
+        method: 'POST',
+        body: { reason: reason.trim() },
+      });
+      flash(`${user.name} can sign in again.`);
+      setReason('');
+      onClose();
+      onReactivated();
+    } catch (cause) {
+      if (isRecentAuthError(cause)) {
+        setPendingRetry(true);
+        setReauth(true);
+        setError('Your session is older than 15 minutes. Confirm it is you, then the change will retry.');
+      } else {
+        setError(errorMessage(cause, 'The account could not be reactivated.'));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Modal
+        open={Boolean(user)}
+        onClose={busy ? () => undefined : onClose}
+        title="Reactivate account"
+        description={user?.email}
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button size="sm" type="submit" form="reactivate-user" loading={busy} disabled={reason.trim().length < 5}>
+              Reactivate
+            </Button>
+          </>
+        }
+      >
+        <form id="reactivate-user" onSubmit={submit} className="space-y-4" noValidate>
+          {error ? <InlineError>{error}</InlineError> : null}
+          <InlineNotice>
+            Reactivating restores access. The account keeps its memberships and any MFA enrollment.
+          </InlineNotice>
+          <Field label="Reason" htmlFor="reactivate-reason" hint="At least 5 characters. Recorded in the audit log.">
+            <Input
+              id="reactivate-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Why access is being restored"
+            />
+          </Field>
+        </form>
+      </Modal>
+      <ReauthDialog
+        open={reauth}
+        email={me?.user.email ?? ''}
+        onClose={() => {
+          setReauth(false);
+          setPendingRetry(false);
+        }}
+        onDone={() => {
+          setReauth(false);
+          if (pendingRetry) void submit();
+        }}
+      />
+    </>
   );
 }
 
@@ -542,4 +664,185 @@ function defaultExpiry(offsetDays = 1) {
   const date = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
   const offset = date.getTimezoneOffset();
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
+}
+
+function InviteAdminDialog({
+  open,
+  onClose,
+  onInvited,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onInvited: () => void;
+}) {
+  const { request, me } = useAuth();
+  const flash = useFlash();
+  const orgs = useApiData<OrganizationSummary[]>(open ? '/api/v1/admin/organizations' : null);
+  const [email, setEmail] = useState('');
+  const [organizationId, setOrganizationId] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fields, setFields] = useState<Record<string, string[]>>({});
+  const [result, setResult] = useState<AdminInviteResult | null>(null);
+  const [reauth, setReauth] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setEmail('');
+    setOrganizationId('');
+    setNote('');
+    setError(null);
+    setFields({});
+    setResult(null);
+  }, [open]);
+
+  const submit = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (!email.trim() || !organizationId) {
+      setError('Enter an email address and choose an organization.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setFields({});
+    try {
+      const invite = await request<AdminInviteResult>('/api/v1/admin/admins', {
+        method: 'POST',
+        body: {
+          email: email.trim(),
+          organizationId,
+          ...(note.trim() ? { note: note.trim() } : {}),
+        },
+      });
+      setResult(invite);
+      flash('Administrator invited.');
+      onInvited();
+    } catch (cause) {
+      if (isRecentAuthError(cause)) {
+        setReauth(true);
+        setError('Your session is older than 15 minutes. Confirm it is you and the invitation will be retried.');
+      } else {
+        setError(errorMessage(cause, 'The administrator could not be invited.'));
+        setFields(fieldErrors(cause));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  function close() {
+    setReauth(false);
+    onClose();
+  }
+
+  return (
+    <>
+      <Modal
+        open={open}
+        onClose={busy ? () => undefined : close}
+        title="Invite administrator"
+        description="Creates another platform administrator. They choose their own password from the invitation email."
+        footer={
+          result ? (
+            <Button size="sm" onClick={close}>
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="secondary" size="sm" onClick={close} disabled={busy}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                type="submit"
+                form="invite-admin"
+                loading={busy}
+                disabled={!email.trim() || !organizationId}
+              >
+                Send invitation
+              </Button>
+            </>
+          )
+        }
+      >
+        {result ? (
+          <div className="space-y-3">
+            <InlineNotice tone="success">
+              Invitation recorded for {result.email} as {roleLabel(result.role)}. It expires{' '}
+              {formatDateTime(result.expiresAt)}.
+            </InlineNotice>
+            {result.developmentToken ? (
+              <div className="rounded-lg border border-line bg-canvas px-3 py-3">
+                <p className="text-[13px] font-semibold text-ink">Development only — no email was sent</p>
+                <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+                  This setup token is issued only in development and is never returned in production, where
+                  the invitation is delivered by email instead.
+                </p>
+                <code className="mt-2 block select-all break-all rounded border border-line bg-white px-2.5 py-2 font-mono text-[12.5px] text-ink">
+                  {result.developmentToken}
+                </code>
+              </div>
+            ) : (
+              <p className="text-[12.5px] leading-relaxed text-muted">
+                The invitation email was sent to {result.email}. They set their own password before it expires.
+              </p>
+            )}
+          </div>
+        ) : (
+          <form id="invite-admin" onSubmit={submit} className="space-y-4" noValidate>
+            {error ? <InlineError>{error}</InlineError> : null}
+            <Field label="Email" htmlFor="admin-email" error={fields.email?.[0]}>
+              <Input
+                id="admin-email"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="admin@example.com"
+              />
+            </Field>
+            <Field
+              label="Organization"
+              htmlFor="admin-org"
+              error={fields.organizationId?.[0]}
+              hint="The organization this administrator belongs to."
+            >
+              <Select
+                id="admin-org"
+                value={organizationId}
+                onChange={(event) => setOrganizationId(event.target.value)}
+                disabled={orgs.loading && !orgs.data}
+              >
+                <option value="">Select an organization</option>
+                {(orgs.data ?? []).map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Note" htmlFor="admin-note" optional hint="Context for the audit log.">
+              <Textarea
+                id="admin-note"
+                value={note}
+                maxLength={300}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="Onboarding the new operations lead."
+              />
+            </Field>
+          </form>
+        )}
+      </Modal>
+
+      <ReauthDialog
+        open={reauth}
+        email={me?.user.email ?? ''}
+        onClose={() => setReauth(false)}
+        onDone={() => {
+          setReauth(false);
+          void submit();
+        }}
+      />
+    </>
+  );
 }

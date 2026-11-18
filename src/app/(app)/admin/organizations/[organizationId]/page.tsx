@@ -2,9 +2,10 @@
 
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import type { AdminInviteResult } from '../../../../../contracts/index';
 import { RequireAdmin } from '@/components/app-shell';
 import { membershipBadge, organizationBadge } from '@/components/status';
-import { IconBuilding, IconPin, IconShield, IconUsers } from '@/components/icons';
+import { IconBuilding, IconPin, IconPlus, IconShield, IconUsers } from '@/components/icons';
 import {
   Avatar,
   Badge,
@@ -17,6 +18,7 @@ import {
   Field,
   InlineError,
   InlineNotice,
+  Input,
   Modal,
   PageHeader,
   Select,
@@ -28,9 +30,9 @@ import {
   useFlash,
 } from '@/components/ui';
 import { ReauthDialog, isRecentAuthError } from '@/components/reauth';
-import { errorMessage } from '@/lib/api';
+import { errorMessage, fieldErrors } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { formatDate, roleLabel } from '@/lib/format';
+import { formatDate, formatDateTime, roleLabel } from '@/lib/format';
 import { useApiData } from '@/lib/use-api-data';
 
 type OrgDetail = {
@@ -75,6 +77,7 @@ function OrganizationDetailContent() {
     organizationId ? `/api/v1/admin/organizations/${organizationId}` : null,
   );
   const [editing, setEditing] = useState<OrgDetail['members'][number] | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   if (loading && !data) {
     return (
@@ -111,7 +114,14 @@ function OrganizationDetailContent() {
       <PageHeader
         title={data.name}
         description={`${data.contactEmail} · ${data.timezone} · created ${formatDate(data.createdAt)}`}
-        actions={<>{organizationBadge(data.status)}</>}
+        actions={
+          <div className="flex items-center gap-2">
+            {organizationBadge(data.status)}
+            <Button size="sm" onClick={() => setAddOpen(true)} icon={<IconPlus className="h-3.5 w-3.5" />}>
+              Add owner or staff
+            </Button>
+          </div>
+        }
       />
 
       <div className="mb-5 grid gap-4 sm:grid-cols-3">
@@ -244,6 +254,13 @@ function OrganizationDetailContent() {
           reload();
         }}
       />
+      <AddMemberDialog
+        open={addOpen}
+        organizationId={organizationId}
+        sites={data.sites}
+        onClose={() => setAddOpen(false)}
+        onAdded={reload}
+      />
     </div>
   );
 }
@@ -365,6 +382,197 @@ function ChangeAccessDialog({
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
                 placeholder="Owner left the business; access revoked at the client's request."
+              />
+            </Field>
+          </form>
+        )}
+      </Modal>
+
+      <ReauthDialog
+        open={reauth}
+        email={me?.user.email ?? ''}
+        onClose={() => setReauth(false)}
+        onDone={() => {
+          setReauth(false);
+          void submit();
+        }}
+      />
+    </>
+  );
+}
+
+function AddMemberDialog({
+  open,
+  organizationId,
+  sites,
+  onClose,
+  onAdded,
+}: {
+  open: boolean;
+  organizationId: string;
+  sites: OrgDetail['sites'];
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const { request, me } = useAuth();
+  const flash = useFlash();
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<'SITE_OWNER' | 'STAFF'>('SITE_OWNER');
+  const [siteId, setSiteId] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fields, setFields] = useState<Record<string, string[]>>({});
+  const [result, setResult] = useState<AdminInviteResult | null>(null);
+  const [reauth, setReauth] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setEmail('');
+    setRole('SITE_OWNER');
+    setSiteId('');
+    setNote('');
+    setError(null);
+    setFields({});
+    setResult(null);
+  }, [open]);
+
+  const submit = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (!organizationId || !email.trim()) return;
+    setBusy(true);
+    setError(null);
+    setFields({});
+    try {
+      const invite = await request<AdminInviteResult>(
+        `/api/v1/admin/organizations/${organizationId}/members`,
+        {
+          method: 'POST',
+          body: {
+            email: email.trim(),
+            role,
+            ...(siteId ? { siteId } : {}),
+            ...(note.trim() ? { note: note.trim() } : {}),
+          },
+        },
+      );
+      setResult(invite);
+      flash(role === 'SITE_OWNER' ? 'Owner invited.' : 'Staff member invited.');
+      onAdded();
+    } catch (cause) {
+      if (isRecentAuthError(cause)) {
+        setReauth(true);
+        setError('Your session is older than 15 minutes. Confirm it is you and the invitation will be retried.');
+      } else {
+        setError(errorMessage(cause, 'The invitation could not be sent.'));
+        setFields(fieldErrors(cause));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  function close() {
+    setReauth(false);
+    onClose();
+  }
+
+  return (
+    <>
+      <Modal
+        open={open}
+        onClose={busy ? () => undefined : close}
+        title="Add owner or staff"
+        description="An invitation email is sent; the recipient chooses their own password."
+        footer={
+          result ? (
+            <Button size="sm" onClick={close}>
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="secondary" size="sm" onClick={close} disabled={busy}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                type="submit"
+                form="add-member"
+                loading={busy}
+                disabled={!email.trim()}
+              >
+                Send invitation
+              </Button>
+            </>
+          )
+        }
+      >
+        {result ? (
+          <div className="space-y-3">
+            <InlineNotice tone="success">
+              Invitation recorded for {result.email} as {roleLabel(result.role)}. It expires{' '}
+              {formatDateTime(result.expiresAt)}.
+            </InlineNotice>
+            {result.developmentToken ? (
+              <div className="rounded-lg border border-line bg-canvas px-3 py-3">
+                <p className="text-[13px] font-semibold text-ink">Development only — no email was sent</p>
+                <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+                  This setup token is issued only in development and is never returned in production, where
+                  the invitation is delivered by email instead.
+                </p>
+                <code className="mt-2 block select-all break-all rounded border border-line bg-white px-2.5 py-2 font-mono text-[12.5px] text-ink">
+                  {result.developmentToken}
+                </code>
+              </div>
+            ) : (
+              <p className="text-[12.5px] leading-relaxed text-muted">
+                The invitation email was sent to {result.email}. They set their own password before it expires.
+              </p>
+            )}
+          </div>
+        ) : (
+          <form id="add-member" onSubmit={submit} className="space-y-4" noValidate>
+            {error ? <InlineError>{error}</InlineError> : null}
+            <Field label="Email" htmlFor="member-email" error={fields.email?.[0]}>
+              <Input
+                id="member-email"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="owner@northwind.example"
+              />
+            </Field>
+            <Field label="Role" htmlFor="member-role" hint="Owners manage sites and staff; staff clock in.">
+              <Select
+                id="member-role"
+                value={role}
+                onChange={(event) => setRole(event.target.value as 'SITE_OWNER' | 'STAFF')}
+              >
+                <option value="SITE_OWNER">Owner</option>
+                <option value="STAFF">Staff</option>
+              </Select>
+            </Field>
+            <Field label="Site" htmlFor="member-site" optional hint="Leave empty to apply to all sites.">
+              <Select
+                id="member-site"
+                value={siteId}
+                onChange={(event) => setSiteId(event.target.value)}
+              >
+                <option value="">All sites</option>
+                {sites.map((site) => (
+                  <option key={site.id} value={site.id}>
+                    {site.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Note" htmlFor="member-note" optional hint="Context for the audit log.">
+              <Textarea
+                id="member-note"
+                value={note}
+                maxLength={300}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="Added at the client's request for the northern region."
               />
             </Field>
           </form>

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import type { OrganizationSummary } from '../../../../contracts/index';
 import { RequireAdmin } from '@/components/app-shell';
 import { organizationBadge } from '@/components/status';
-import { IconBuilding, IconChevronRight, IconPlus } from '@/components/icons';
+import { IconAlert, IconBuilding, IconChevronRight, IconPlus } from '@/components/icons';
 import {
   Button,
   Card,
@@ -53,6 +53,7 @@ function OrganizationsContent() {
   const [query, setQuery] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<OrganizationSummary | null>(null);
+  const [deleting, setDeleting] = useState<OrganizationSummary | null>(null);
   const { data, error, loading, reload } = useApiData<OrganizationSummary[]>('/api/v1/admin/organizations');
 
   const filtered = (data ?? []).filter((org) =>
@@ -126,6 +127,9 @@ function OrganizationsContent() {
                           Open
                         </Button>
                       </Link>
+                      <Button variant="danger" size="sm" onClick={() => setDeleting(org)}>
+                        Delete
+                      </Button>
                     </div>
                   </Td>
                 </tr>
@@ -152,6 +156,7 @@ function OrganizationsContent() {
 
       <CreateOrgDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreated={reload} />
       <EditOrgDialog organization={editing} onClose={() => setEditing(null)} onSaved={reload} />
+      <DeleteOrgDialog organization={deleting} onClose={() => setDeleting(null)} onDeleted={reload} />
     </div>
   );
 }
@@ -391,6 +396,171 @@ function EditOrgDialog({
             <div className="rounded-lg bg-canvas px-3 py-2.5 text-[11.5px] leading-relaxed text-muted">
               Version {detail?.version ?? '—'}. If someone else edits this organization first, the save is
               rejected as a conflict instead of overwriting their change.
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      <ReauthDialog
+        open={reauth}
+        email={me?.user.email ?? ''}
+        onClose={() => {
+          setReauth(false);
+          setPendingRetry(false);
+        }}
+        onDone={() => {
+          setReauth(false);
+          if (pendingRetry) {
+            setPendingRetry(false);
+            void submit();
+          }
+        }}
+      />
+    </>
+  );
+}
+
+function DeleteOrgDialog({
+  organization,
+  onClose,
+  onDeleted,
+}: {
+  organization: OrganizationSummary | null;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const { request, me } = useAuth();
+  const flash = useFlash();
+  const [detail, setDetail] = useState<OrgDetail | null>(null);
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reauth, setReauth] = useState(false);
+  const [pendingRetry, setPendingRetry] = useState(false);
+
+  useEffect(() => {
+    if (!organization) {
+      setDetail(null);
+      return;
+    }
+    setReason('');
+    setError(null);
+    setLoading(true);
+    void (async () => {
+      try {
+        const result = await request<OrgDetail>(`/api/v1/admin/organizations/${organization.id}`);
+        setDetail(result);
+      } catch (cause) {
+        setError(errorMessage(cause, 'The organization could not be loaded.'));
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // Re-run only when a different organization opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organization]);
+
+  const submit = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (!detail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/api/v1/admin/organizations/${detail.id}`, {
+        method: 'DELETE',
+        body: { version: detail.version, reason: reason.trim() },
+      });
+      flash('Organization deleted.');
+      onDeleted();
+      close();
+    } catch (cause) {
+      if (isRecentAuthError(cause)) {
+        setPendingRetry(true);
+        setReauth(true);
+        setError('Your session is older than 15 minutes. Confirm it is you, then the deletion will retry.');
+      } else {
+        setError(errorMessage(cause, 'The organization could not be deleted.'));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  function close() {
+    setDetail(null);
+    setReason('');
+    setError(null);
+    setReauth(false);
+    setPendingRetry(false);
+    onClose();
+  }
+
+  const reasonTooShort = reason.trim().length > 0 && reason.trim().length < 5;
+
+  return (
+    <>
+      <Modal
+        open={Boolean(organization)}
+        onClose={busy ? () => undefined : close}
+        title="Delete organization"
+        description={organization?.name}
+        width="max-w-xl"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={close} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              type="submit"
+              form="delete-org"
+              loading={busy}
+              disabled={!detail || loading || reason.trim().length < 5}
+            >
+              Delete organization
+            </Button>
+          </>
+        }
+      >
+        {loading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : (
+          <form id="delete-org" onSubmit={submit} className="space-y-4" noValidate>
+            {error ? <InlineError>{error}</InlineError> : null}
+            <div className="flex items-start gap-2 rounded-lg border border-[#f6c8c4] bg-danger-soft px-3 py-3 text-[14px] leading-relaxed text-danger">
+              <IconAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">This archives the organization and cannot be undone here.</p>
+                <ul className="mt-1.5 list-disc space-y-1 pl-5">
+                  <li>The organization is archived and access to every site is revoked.</li>
+                  <li>Attendance and audit history are retained for compliance.</li>
+                  <li>Users whose only organization was this one are disabled.</li>
+                </ul>
+              </div>
+            </div>
+            <Field
+              label="Reason for deletion"
+              htmlFor="delete-org-reason"
+              hint="At least 5 characters. Stored in the audit log with your name."
+              error={reasonTooShort ? 'Enter at least 5 characters.' : undefined}
+            >
+              <Input
+                id="delete-org-reason"
+                type="text"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Client contract ended; archived at their request."
+              />
+            </Field>
+            <div className="rounded-lg bg-canvas px-3 py-2.5 text-[12.5px] leading-relaxed text-muted">
+              Version {detail?.version ?? '—'}. If someone else changes this organization first, the deletion
+              is rejected as a conflict instead of removing stale data. Active shifts or the last platform
+              administrator also block deletion.
             </div>
           </form>
         )}
