@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { AdminAccountEditor } from '@/components/admin-account-editor';
+import { CreateAccount } from '@/components/create-account';
 import { useEffect, useState } from 'react';
 import type { AdminInviteResult, AdminUserSummary, OrganizationSummary, PlatformSiteSummary } from '../../../../contracts/index';
 import { RequireAdmin } from '@/components/app-shell';
@@ -55,7 +57,7 @@ type Grant = {
 export default function AdminUsersPage() {
   return (
     <RequireAdmin>
-      <UsersContent />
+      <CreateAccount admin /><UsersContent />
     </RequireAdmin>
   );
 }
@@ -85,6 +87,7 @@ function UsersContent() {
 function UsersPanel() {
   const { me } = useAuth();
   const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState<AdminUserSummary | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [reactivating, setReactivating] = useState<AdminUserSummary | null>(null);
   const [deleting, setDeleting] = useState<AdminUserSummary | null>(null);
@@ -104,7 +107,7 @@ function UsersPanel() {
         action={
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={() => setInviteOpen(true)} icon={<IconPlus className="h-3.5 w-3.5" />}>
-              Invite administrator
+              Create account
             </Button>
             <SearchInput value={query} onChange={setQuery} placeholder="Search users" className="w-56" />
           </div>
@@ -136,7 +139,7 @@ function UsersPanel() {
                   <div className="flex items-center gap-2.5">
                     <Avatar name={user.name} />
                     <div className="min-w-0">
-                      <p className="truncate text-[13.5px] font-medium text-ink">{user.name}</p>
+                      <button className="truncate text-[13.5px] font-medium text-cobalt underline" onClick={() => setEditing(user)}>{user.name}</button>
                       <p className="truncate text-[12px] text-muted">{user.email}</p>
                     </div>
                   </div>
@@ -206,14 +209,11 @@ function UsersPanel() {
         <EmptyState
           icon={<IconMail className="h-5 w-5" />}
           title={query ? 'No matching users' : 'No users yet'}
-          description="Accounts are created only through staff invitations or seeded administrators."
+          description="Create staff, owners, and administrators using the account form."
         />
       )}
-      <InviteAdminDialog
-        open={inviteOpen}
-        onClose={() => setInviteOpen(false)}
-        onInvited={reload}
-      />
+      {inviteOpen ? <><Button variant="secondary" onClick={() => setInviteOpen(false)}>Close account form</Button><CreateAccount admin onCreated={reload} /></> : null}
+      {editing ? <><Button variant="secondary" onClick={() => setEditing(null)}>Close editor</Button><AdminAccountEditor key={editing.id} user={editing} onSaved={reload} /></> : null}
       <ReactivateDialog
         user={reactivating}
         onClose={() => setReactivating(null)}
@@ -791,7 +791,7 @@ function defaultExpiry(offsetDays = 1) {
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
 }
 
-function InviteAdminDialog({
+function LegacyInviteAdminDialog({
   open,
   onClose,
   onInvited,
@@ -866,7 +866,7 @@ function InviteAdminDialog({
       <Modal
         open={open}
         onClose={busy ? () => undefined : close}
-        title="Invite administrator"
+        title="Create account"
         description="Creates another platform administrator. They choose their own password from the invitation email."
         footer={
           result ? (
@@ -971,3 +971,6 @@ function InviteAdminDialog({
     </>
   );
 }
+
+// Retained legacy workflow.
+void LegacyInviteAdminDialog;

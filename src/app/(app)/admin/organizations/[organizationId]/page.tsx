@@ -1,5 +1,6 @@
 'use client';
 
+import { CreateAccount } from '@/components/create-account';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { AdminInviteResult } from '../../../../../contracts/index';
@@ -234,7 +235,7 @@ function OrganizationDetailContent() {
             <EmptyState
               icon={<IconUsers className="h-5 w-5" />}
               title="No members"
-              description="Invite a site owner from the owner workspace, or have them join through an invitation."
+              description="Create an owner or staff account using the account form."
               compact
             />
           )}
@@ -254,13 +255,7 @@ function OrganizationDetailContent() {
           reload();
         }}
       />
-      <AddMemberDialog
-        open={addOpen}
-        organizationId={organizationId}
-        sites={data.sites}
-        onClose={() => setAddOpen(false)}
-        onAdded={reload}
-      />
+      {addOpen ? <><Button variant="secondary" onClick={() => setAddOpen(false)}>Close account form</Button><CreateAccount admin onCreated={reload} /></> : null}
     </div>
   );
 }
@@ -401,7 +396,7 @@ function ChangeAccessDialog({
   );
 }
 
-function AddMemberDialog({
+function LegacyAddMemberDialog({
   open,
   organizationId,
   sites,
@@ -591,3 +586,6 @@ function AddMemberDialog({
     </>
   );
 }
+
+// Retained legacy workflow.
+void LegacyAddMemberDialog;

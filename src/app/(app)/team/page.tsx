@@ -1,5 +1,7 @@
 'use client';
 
+import { TeamDirectory } from '@/components/team-directory';
+import { CreateAccount } from '@/components/create-account';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   CorrectionDetail,
@@ -51,7 +53,7 @@ export default function TeamPage() {
       title="Team tools are for site owners"
       message="Your account can view its own history but not the team. Ask a site owner for access."
     >
-      <TeamContent />
+      <CreateAccount /><TeamDirectory />
     </RequireCapability>
   );
 }
@@ -73,7 +75,7 @@ const PRESENCE_RANK: Record<RosterEntry['presence'], number> = {
   NOT_WORKING: 0,
 };
 
-function TeamContent() {
+function LegacyTeamContent() {
   const { request } = useAuth();
   const [tab, setTab] = useState<Tab>('staff');
   const [query, setQuery] = useState('');
@@ -701,3 +703,6 @@ function CorrectionDetailDialog({
     </Modal>
   );
 }
+
+// Retained for possible restoration of the legacy workflow.
+void LegacyTeamContent;

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { objectIdSchema } from './ids';
-import { roleSchema } from './auth';
+import { objectIdSchema } from './ids.js';
+import { roleSchema } from './auth.js';
 
 export const organizationSummarySchema = z.object({
   id: z.string(),
@@ -55,6 +55,7 @@ export const accessGrantSummarySchema = z.object({
 });
 
 export const adminUserSummarySchema = z.object({
+  phone: z.string().optional(),
   id: z.string(),
   name: z.string(),
   email: z.string(),
@@ -63,6 +64,7 @@ export const adminUserSummarySchema = z.object({
   accountStatus: z.enum(['ACTIVE', 'DISABLED', 'DELETED']),
   memberships: z.array(
     z.object({
+      id: z.string().optional(),
       organizationId: z.string(),
       organizationName: z.string(),
       role: roleSchema,
@@ -77,7 +79,7 @@ export type AdminUserSummary = z.infer<typeof adminUserSummarySchema>;
 
 export const membershipUpdateSchema = z.strictObject({
   status: z.enum(['ACTIVE', 'SUSPENDED', 'REVOKED']).optional(),
-  role: z.enum(['STAFF', 'SITE_OWNER']).optional(),
+  role: roleSchema.optional(),
   reason: z.string().trim().min(5).max(300),
 });
 
@@ -196,7 +198,11 @@ export const ownerOverviewSchema = z.object({
 
 export type OwnerOverview = z.infer<typeof ownerOverviewSchema>;
 
-// Mirrored from api/src/contracts/admin.ts for the admin management screens.
+export const organizationDeleteSchema = z.strictObject({
+  version: z.number().int().min(1),
+  reason: z.string().trim().min(5).max(300),
+});
+
 export const organizationDeleteSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -210,6 +216,19 @@ export const organizationDeleteSummarySchema = z.object({
 
 export type OrganizationDeleteSummary = z.infer<typeof organizationDeleteSummarySchema>;
 
+export const adminMemberInviteSchema = z.strictObject({
+  email: z.email(),
+  role: z.enum(['SITE_OWNER', 'STAFF']),
+  siteId: objectIdSchema.optional(),
+  note: z.string().trim().max(300).optional(),
+});
+
+export const adminInviteSchema = z.strictObject({
+  email: z.email(),
+  organizationId: objectIdSchema,
+  note: z.string().trim().max(300).optional(),
+});
+
 export const adminInviteResultSchema = z.object({
   ok: z.literal(true),
   email: z.string(),
@@ -219,6 +238,14 @@ export const adminInviteResultSchema = z.object({
 });
 
 export type AdminInviteResult = z.infer<typeof adminInviteResultSchema>;
+
+export const adminUserReactivateSchema = z.strictObject({
+  reason: z.string().trim().min(5).max(300),
+});
+
+export const adminUserDeleteSchema = z.strictObject({
+  reason: z.string().trim().min(5).max(300),
+});
 
 export const adminUserDeleteSummarySchema = z.object({
   id: z.string(),

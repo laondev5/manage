@@ -26,6 +26,7 @@ function SignInForm() {
 
   const finish = async () => {
     const me = await refresh();
+    if (me?.mustChangePassword) { router.replace('/'); return; }
     if (me?.mfaSetupRequired) {
       router.replace('/mfa-setup');
       return;

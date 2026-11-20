@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { objectIdSchema } from './ids';
-import { roleSchema } from './auth';
+import { objectIdSchema } from './ids.js';
+import { roleSchema } from './auth.js';
 
 export const timezoneSchema = z
   .string()
@@ -85,6 +85,8 @@ export const siteLifecycleSchema = z.strictObject({
 export type SiteLifecycleInput = z.infer<typeof siteLifecycleSchema>;
 
 export const siteSummarySchema = z.object({
+  policy: sitePolicySchema.optional(),
+  canUpdateLocation: z.boolean().optional(),
   id: z.string(),
   organizationId: z.string(),
   organizationName: z.string().optional(),
@@ -136,6 +138,12 @@ export const assignmentCreateSchema = z.strictObject({
   permissionScope: z.enum(['CLOCK_ONLY', 'CLOCK_AND_HISTORY']).default('CLOCK_AND_HISTORY'),
   effectiveFrom: z.iso.datetime({ offset: true }).or(z.iso.datetime()).optional(),
 });
+
+export const assignmentRemoveSchema = z.strictObject({
+  reason: z.string().trim().min(5).max(300).optional(),
+});
+
+export type AssignmentRemoveInput = z.infer<typeof assignmentRemoveSchema>;
 
 export const rosterEntrySchema = z.object({
   memberId: z.string(),

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { InitialPassword } from './initial-password';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -100,6 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
     );
   }
+  if (me.mustChangePassword) return <InitialPassword />;
   if (me.mfaSetupRequired) return <MfaSetupInterstitial />;
 
   const admin = isAdmin(me);

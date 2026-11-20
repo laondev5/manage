@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { objectIdSchema } from './ids';
-import { roleSchema } from './auth';
+import { objectIdSchema } from './ids.js';
+import { roleSchema } from './auth.js';
 
 export const memberStatusUpdateSchema = z.strictObject({
   status: z.enum(['ACTIVE', 'SUSPENDED']),
@@ -11,11 +11,22 @@ export const memberStatusUpdateSchema = z.strictObject({
 export type MemberStatusUpdate = z.infer<typeof memberStatusUpdateSchema>;
 
 export const memberRemovalSchema = z.strictObject({
-  reason: z.string().trim().min(5).max(300),
+  reason: z.string().trim().min(5, 'Explain the change in at least 5 characters.').max(300),
   expectedVersion: z.number().int().min(1),
 });
 
 export type MemberRemoval = z.infer<typeof memberRemovalSchema>;
+
+export const memberRemovalSummarySchema = z.object({
+  id: z.string(),
+  organizationId: z.string(),
+  membershipsRevoked: z.number(),
+  assignmentsEnded: z.number(),
+  invitationsRevoked: z.number(),
+  sitesCleared: z.number(),
+});
+
+export type MemberRemovalSummary = z.infer<typeof memberRemovalSummarySchema>;
 
 export const memberQuerySchema = z.strictObject({
   message: z.string().trim().min(5, 'Write at least 5 characters.').max(500),
@@ -25,6 +36,7 @@ export const memberQuerySchema = z.strictObject({
 export type MemberQueryInput = z.infer<typeof memberQuerySchema>;
 
 export const teamMemberSiteSchema = z.object({
+  assignmentId: z.string(),
   id: z.string(),
   name: z.string(),
   presence: z.enum(['UNKNOWN', 'INSIDE', 'EXIT_PENDING', 'OUTSIDE', 'NOT_WORKING']),
@@ -65,6 +77,8 @@ export const teamMemberSummarySchema = z.object({
   name: z.string(),
   email: z.string(),
   role: roleSchema,
+  phone: z.string().optional(),
+  canUpdateSiteLocation: z.boolean().optional(),
   title: z.string().nullable(),
   status: z.enum(['ACTIVE', 'SUSPENDED', 'REVOKED']),
   membershipId: z.string(),
@@ -89,6 +103,8 @@ export const teamMemberDetailSchema = z.object({
     name: z.string(),
     email: z.string(),
     role: roleSchema,
+  phone: z.string().optional(),
+  canUpdateSiteLocation: z.boolean().optional(),
     title: z.string().nullable(),
     status: z.enum(['ACTIVE', 'SUSPENDED', 'REVOKED']),
     membershipId: z.string(),
