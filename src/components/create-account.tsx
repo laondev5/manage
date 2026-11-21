@@ -15,12 +15,14 @@ export function CreateAccount({ admin = false, onCreated }: { admin?: boolean; o
   const [name, setName] = useState(''); const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [selected, setSelected] = useState<string[]>([]); const [permitted, setPermitted] = useState(false);
+  const [created, setCreated] = useState(false);
   const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
   return <Card className="my-4 p-5"><form className="grid gap-4 md:grid-cols-2" onSubmit={async (event) => {
     event.preventDefault(); setBusy(true); setMessage('');
     try {
-      const result = await request<{ emailProvider: string }>('/api/v1/accounts', { method: 'POST', body: { organizationId, name, email, phone, role, siteIds: selected, canUpdateSiteLocation: permitted } });
-      setMessage(result.emailProvider === 'local' ? 'Account created. Development email adapter: verification and temporary-password messages were saved locally, not emailed.' : 'Account created. Email verification is required before sign-in. Their temporary password is emailed to them and must be replaced on first sign-in.'); onCreated?.();
+      const result = await request<{ emailProvider: string; emailStatus?: string }>('/api/v1/accounts', { method: 'POST', body: { organizationId, name, email, phone, role, siteIds: selected, canUpdateSiteLocation: permitted } });
+      setCreated(true);
+      setMessage(result.emailStatus === 'failed' ? 'Account created, but the password email failed. Do not create it again. Ask the user to use Forgot password and verify their email. If reset email also fails, the administrator must check email delivery.' : result.emailProvider === 'local' ? 'Account created. Development email adapter: verification and temporary-password messages were saved locally, not emailed.' : 'Account created. Email verification is required before sign-in. Their temporary password is emailed to them and must be replaced on first sign-in.'); onCreated?.();
     } catch (cause) { setMessage(errorMessage(cause, 'Could not create account.')); }
     finally { setBusy(false); }
   }}>
@@ -38,7 +40,7 @@ export function CreateAccount({ admin = false, onCreated }: { admin?: boolean; o
     <Field label="Phone"><Input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} required /></Field>
     {role === 'SUPERVISOR' ? <label><input type="checkbox" checked={permitted} onChange={(event) => setPermitted(event.target.checked)} /> Allow assigned-site coordinate updates</label> : null}
     <fieldset className="md:col-span-2"><legend>Site assignments</legend>{sites.data?.filter((site) => site.organizationId === organizationId).map((site) => <label key={site.id} className="mr-4 inline-flex gap-2"><input type="checkbox" checked={selected.includes(site.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, site.id] : selected.filter((id) => id !== site.id))} />{site.name}</label>)}</fieldset>
-    <Button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create account'}</Button>
+    <Button type="submit" disabled={busy || created}>{busy ? 'Creating…' : 'Create account'}</Button>
     <p role="status" className="md:col-span-2">{message}</p>
   </form></Card>;
 }
